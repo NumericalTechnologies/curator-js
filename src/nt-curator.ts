@@ -2,9 +2,12 @@ import zookeeper, { State } from "node-zookeeper-client";
 import { ReadLock } from "./locks/read-lock";
 import { WriteLock } from "./locks/write-lock";
 import EventEmitter from "events";
-import { ConnectivityEvents } from "./nt-curator.types";
+import {
+  ConnectivityEventNames,
+  StateChangeEventName,
+} from "./nt-curator.types";
 
-export class NtCurator implements EventEmitter {
+export class NtCurator extends EventEmitter {
   private isConnecting: boolean;
   private client: zookeeper.Client;
 
@@ -12,6 +15,7 @@ export class NtCurator implements EventEmitter {
     public connectionString: string,
     public config: Parameters<(typeof zookeeper)["createClient"]>[1]
   ) {
+    super();
     this.client = this.createClient();
   }
 
@@ -66,110 +70,111 @@ export class NtCurator implements EventEmitter {
     return new WriteLock(this, path);
   }
 
-  public addListener(event: "state", cb: (state: State) => void): this;
-  public addListener(event: ConnectivityEvents, cb: () => void): this;
   public addListener(
-    event: ConnectivityEvents | "state",
-    cb: ((state?: State) => void) | (() => void)
+    event: StateChangeEventName,
+    cb: (state: State) => void
+  ): this;
+  public addListener(event: ConnectivityEventNames, cb: () => void): this;
+  public addListener(
+    event: StateChangeEventName | ConnectivityEventNames,
+    cb: ((state: State) => void) | (() => void)
   ): this {
-    this.client.addListener(event, cb);
+    super.addListener(event, cb);
     return this;
   }
 
-  public on(event: "state", cb: (state: State) => void): this;
-  public on(event: ConnectivityEvents, cb: () => void): this;
+  public on(event: StateChangeEventName, cb: (state: State) => void): this;
+  public on(event: ConnectivityEventNames, cb: () => void): this;
   public on(
-    event: ConnectivityEvents | "state",
+    event: StateChangeEventName | ConnectivityEventNames,
     cb: ((state?: State) => void) | (() => void)
   ): this {
-    this.client.on(event, cb);
+    super.on(event, cb);
     return this;
   }
 
-  public once(event: "state", cb: (state: State) => void): this;
-  public once(event: ConnectivityEvents, cb: () => void): this;
+  public once(event: StateChangeEventName, cb: (state: State) => void): this;
+  public once(event: ConnectivityEventNames, cb: () => void): this;
   public once(
-    event: ConnectivityEvents | "state",
+    event: StateChangeEventName | ConnectivityEventNames,
     cb: ((state?: State) => void) | (() => void)
   ): this {
-    this.client.once(event, cb);
+    super.once(event, cb);
     return this;
   }
 
-  public removeListener(event: ConnectivityEvents, cb: () => void): this {
-    this.client.removeListener(event, cb);
+  public removeListener(event: ConnectivityEventNames, cb: () => void): this {
+    super.removeListener(event, cb);
     return this;
   }
 
-  public off(event: ConnectivityEvents, cb: () => void): this {
-    this.client.off(event, cb);
+  public off(event: ConnectivityEventNames, cb: () => void): this {
+    super.off(event, cb);
     return this;
   }
 
-  public removeAllListeners(event?: ConnectivityEvents): this {
-    this.client.removeAllListeners(event);
+  public removeAllListeners(event?: ConnectivityEventNames): this {
+    super.removeAllListeners(event);
     return this;
   }
 
-  public setMaxListeners(n: number): this {
-    this.client.setMaxListeners(n);
+  public listeners(event: ConnectivityEventNames): Function[] {
+    return super.listeners(event);
+  }
+
+  public rawListeners(event: ConnectivityEventNames): Function[] {
+    return super.rawListeners(event);
+  }
+
+  public emit(
+    event: StateChangeEventName | ConnectivityEventNames,
+    ...args: any[]
+  ): boolean {
+    return super.emit(event, ...args);
+  }
+
+  public listenerCount(event: ConnectivityEventNames): number {
+    return super.listenerCount(event);
+  }
+
+  public prependListener(event: ConnectivityEventNames, cb: () => void): this {
+    super.prependListener(event, cb);
     return this;
   }
 
-  public getMaxListeners(): number {
-    return this.client.getMaxListeners();
-  }
-
-  public listeners(event: ConnectivityEvents): Function[] {
-    return this.client.listeners(event);
-  }
-
-  public rawListeners(event: ConnectivityEvents): Function[] {
-    return this.client.rawListeners(event);
-  }
-
-  public emit(event: ConnectivityEvents, ...args: any[]): boolean {
-    return this.client.emit(event, ...args);
-  }
-
-  public listenerCount(event: ConnectivityEvents): number {
-    return this.client.listenerCount(event);
-  }
-
-  public prependListener(event: ConnectivityEvents, cb: () => void): this {
-    this.client.prependListener(event, cb);
+  public prependOnceListener(
+    event: ConnectivityEventNames,
+    cb: () => void
+  ): this {
+    super.prependOnceListener(event, cb);
     return this;
-  }
-
-  public prependOnceListener(event: ConnectivityEvents, cb: () => void): this {
-    this.client.prependOnceListener(event, cb);
-    return this;
-  }
-
-  public eventNames(): Array<string> {
-    return this.client
-      .eventNames()
-      .filter(
-        (eventName): eventName is string => typeof eventName === "string"
-      );
   }
 
   private createClient() {
     const client = zookeeper.createClient(this.connectionString, this.config);
 
+    this.registerEventHandlers(client);
+
+    return client;
+  }
+
+  private registerEventHandlers(client: zookeeper.Client) {
+    client.on("connected", () => this.emit("connected"));
+    client.on("connectedReadOnly", () => this.emit("connectedReadOnly"));
+    client.on("disconnected", () => this.emit("disconnected"));
+    client.on("expired", () => this.emit("expired"));
+    client.on("authenticationFailed", () => this.emit("authenticationFailed"));
+
     client.on("state", (state) => {
+      this.emit("state", state);
+
       if (state === zookeeper.State.EXPIRED) {
         client.close();
         client.removeAllListeners();
 
-        this.client = zookeeper.createClient(
-          this.connectionString,
-          this.config
-        );
+        this.client = this.createClient();
         this.connect();
       }
     });
-
-    return client;
   }
 }

@@ -1,1 +1,2 @@
-export type ConnectivityEvents = "connected" | "connectedReadOnly" | "disconnected" | "expired" | "authenticationFailed";
+export type StateChangeEventName = "state";
+export type ConnectivityEventNames = "connected" | "connectedReadOnly" | "disconnected" | "expired" | "authenticationFailed";
