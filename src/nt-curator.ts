@@ -9,8 +9,8 @@ export class NtCurator implements EventEmitter {
   private client: zookeeper.Client;
 
   constructor(
-    private connectionString: string,
-    private config: Parameters<(typeof zookeeper)["createClient"]>[1]
+    public connectionString: string,
+    public config: Parameters<(typeof zookeeper)["createClient"]>[1]
   ) {
     this.client = this.createClient();
   }

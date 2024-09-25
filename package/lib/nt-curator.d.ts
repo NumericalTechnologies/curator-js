@@ -5,8 +5,8 @@ import { WriteLock } from "./locks/write-lock";
 import EventEmitter from "events";
 import { ConnectivityEvents } from "./nt-curator.types";
 export declare class NtCurator implements EventEmitter {
-    connectionString: string;
-    config: Parameters<(typeof zookeeper)["createClient"]>[1];
+    private connectionString;
+    private config;
     private isConnecting;
     private client;
     constructor(connectionString: string, config: Parameters<(typeof zookeeper)["createClient"]>[1]);
