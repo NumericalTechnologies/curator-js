@@ -5,7 +5,7 @@
     "url": "https://github.com/NumericalTechnologies/curator-js/issues",
     "email": "info@numtech.com"
   },
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "curator-js is a utility package used to provide read / write lock features from Apache ZooKeeper as the server",
   "author": "Numerical Technologies Pte Ltd",
   "license": "MIT",

@@ -1,33 +1,29 @@
-import {
-  CreateMode, Event, Exception, State,
-} from "node-zookeeper-client";
+import { CreateMode, Event, Exception, State } from "node-zookeeper-client";
 import { parseZooKeeperError } from "../helpers/error";
-import { NtCuratorFramework } from "../nt-curator-framework";
+import { NtCurator } from "../nt-curator";
 import { PathUtility } from "../path-utility";
 import { READ_LOCK_PATH_NAME, WRITE_LOCK_PATH_NAME } from "../constants";
 import { LockError, LockErrorCodes } from "../errors/lock-error";
-
-interface ReadLockAcquireResponse {
-  acquired: boolean;
-  error: LockError | null;
-}
-interface ReadLockReleaseResponse {
-  released: boolean;
-  error: LockError | null;
-}
+import { getNodeSequenceNumber } from "../helpers/validation";
+import {
+  AcquireResponse,
+  IsTypeLockedResponse,
+  ReleaseResponse,
+  TryAcquireResponse,
+} from "./locks.types";
 
 export class ReadLock {
   public nodeAbsolutePath: string;
 
   public lockAbsolutePath: string;
 
-  private ntCuratorFramework: NtCuratorFramework;
+  private ntCurator: NtCurator;
 
   private pathUtility: PathUtility;
 
-  constructor(ntCuratorFramework: NtCuratorFramework, path: string) {
-    this.ntCuratorFramework = ntCuratorFramework;
-    this.pathUtility = new PathUtility(ntCuratorFramework);
+  constructor(ntCurator: NtCurator, path: string) {
+    this.ntCurator = ntCurator;
+    this.pathUtility = new PathUtility(ntCurator);
     this.nodeAbsolutePath = this.pathUtility.normalizePath(path);
   }
 
@@ -55,24 +51,40 @@ export class ReadLock {
    * @returns An object with `released` to represent whether the lock is released, and `error` (if any).
    * @throws {LockError}
    */
-  public async acquire(options?: { data?: Buffer; timeout?: number; }): Promise<ReadLockAcquireResponse> {
+  public async acquire(options?: {
+    data?: Buffer;
+    timeout?: number;
+  }): Promise<AcquireResponse> {
     const { data = Buffer.from(""), timeout = 1000 } = options ?? {};
 
-    const client = this.ntCuratorFramework.getClient();
+    const client = this.ntCurator.getClient();
     let createdPath = "";
     let timedOut = false;
-    const enforceTimeout = async () => new Promise<ReadLockAcquireResponse>((res) => {
-      setTimeout(() => {
-        timedOut = true;
-        res({ acquired: false, error: new LockError(LockErrorCodes.OPERATION_TIMED_OUT, `Acquiring the write lock timed out after ${timeout}ms.`) });
-      }, timeout);
-    });
+    const enforceTimeout = async () =>
+      new Promise<AcquireResponse>((res) => {
+        setTimeout(() => {
+          timedOut = true;
+          res({
+            acquired: false,
+            error: new LockError(
+              LockErrorCodes.OPERATION_TIMED_OUT,
+              `Acquiring the write lock timed out after ${timeout}ms.`
+            ),
+          });
+        }, timeout);
+      });
 
     const enforceTimeoutPromise = enforceTimeout();
     const acquireLock = async () => {
       try {
         if (client.getState().code !== State.SYNC_CONNECTED.code) {
-          return { acquired: false, error: new LockError(LockErrorCodes.NOT_CONNECTED, "Failed to acquire the read lock because of connection issues.") };
+          return {
+            acquired: false,
+            error: new LockError(
+              LockErrorCodes.NOT_CONNECTED,
+              "Failed to acquire the read lock because of connection issues."
+            ),
+          };
         }
 
         await this.pathUtility.ensurePathExists(this.nodeAbsolutePath);
@@ -85,7 +97,7 @@ export class ReadLock {
             (error, path) => {
               if (error) return rej(error);
               res(path);
-            },
+            }
           );
         });
 
@@ -96,17 +108,25 @@ export class ReadLock {
               res(children);
             });
           });
-          const writeNodePaths = children.filter((child) => child.startsWith(WRITE_LOCK_PATH_NAME));
+          const writeNodePaths = children.filter((child) =>
+            child.startsWith(WRITE_LOCK_PATH_NAME)
+          );
 
-          if (!this.pathUtility.doesLowerSequenceNumberChildPathExist(createdPath, writeNodePaths)) {
+          if (
+            !this.pathUtility.doesLowerSequenceNumberChildPathExist(
+              createdPath,
+              writeNodePaths
+            )
+          ) {
             this.lockAbsolutePath = createdPath;
             return { acquired: true, error: null };
           }
 
-          const nextLowestSequenceNumberChildPath = this.pathUtility.getNextLowestSequenceNumberChildPath(
-            createdPath,
-            writeNodePaths,
-          );
+          const nextLowestSequenceNumberChildPath =
+            this.pathUtility.getNextLowestSequenceNumberChildPath(
+              createdPath,
+              writeNodePaths
+            );
 
           if (!nextLowestSequenceNumberChildPath) {
             this.lockAbsolutePath = createdPath;
@@ -117,7 +137,10 @@ export class ReadLock {
             enforceTimeoutPromise,
             new Promise((res, rej) => {
               client.exists(
-                this.pathUtility.normalizePath(this.nodeAbsolutePath, nextLowestSequenceNumberChildPath),
+                this.pathUtility.normalizePath(
+                  this.nodeAbsolutePath,
+                  nextLowestSequenceNumberChildPath
+                ),
                 (event) => {
                   if (event.type !== Event.NODE_DELETED) return;
                   res(null);
@@ -125,15 +148,28 @@ export class ReadLock {
                 (error, stat) => {
                   if (error) return rej(error);
                   if (!stat) return res(null);
-                },
+                }
               );
             }),
           ]);
 
-          if (timedOut) return { acquired: false, error: new LockError(LockErrorCodes.OPERATION_TIMED_OUT, `Acquiring the write lock timed out after ${timeout}ms.`) };
+          if (timedOut)
+            return {
+              acquired: false,
+              error: new LockError(
+                LockErrorCodes.OPERATION_TIMED_OUT,
+                `Acquiring the write lock timed out after ${timeout}ms.`
+              ),
+            };
         }
       } catch (err: unknown) {
-        return { acquired: false, error: new LockError(LockErrorCodes.UNEXPECTED_ERROR, "An unexpected error occurred while trying to acquire the read lock.") };
+        return {
+          acquired: false,
+          error: new LockError(
+            LockErrorCodes.UNEXPECTED_ERROR,
+            "An unexpected error occurred while trying to acquire the read lock."
+          ),
+        };
       } finally {
         if (timedOut && createdPath) {
           await new Promise((res, rej) => {
@@ -146,12 +182,7 @@ export class ReadLock {
       }
     };
 
-    return Promise.race(
-      [
-        enforceTimeoutPromise,
-        acquireLock(),
-      ],
-    );
+    return Promise.race([enforceTimeoutPromise, acquireLock()]);
   }
 
   /**
@@ -162,13 +193,21 @@ export class ReadLock {
    * @returns An object with `released` to represent whether the lock is released, and `error` (if any).
    * @throws {LockError}
    */
-  public async tryAcquire(options?: { data?: Buffer; }): Promise<ReadLockAcquireResponse> {
+  public async tryAcquire(options?: {
+    data?: Buffer;
+  }): Promise<TryAcquireResponse> {
     const { data = Buffer.from("") } = options ?? {};
 
     try {
-      const client = this.ntCuratorFramework.getClient();
+      const client = this.ntCurator.getClient();
       if (client.getState().code !== State.SYNC_CONNECTED.code) {
-        return { acquired: false, error: new LockError(LockErrorCodes.NOT_CONNECTED, "Failed to acquire the read lock because of connection issues.") };
+        return {
+          acquired: false,
+          error: new LockError(
+            LockErrorCodes.NOT_CONNECTED,
+            "Failed to acquire the read lock because of connection issues."
+          ),
+        };
       }
       await this.pathUtility.ensurePathExists(this.nodeAbsolutePath);
 
@@ -181,7 +220,7 @@ export class ReadLock {
           (error, path) => {
             if (error) return rej(error);
             res(path);
-          },
+          }
         );
       });
 
@@ -192,9 +231,16 @@ export class ReadLock {
         });
       });
 
-      const writeNodePaths = children.filter((child) => child.startsWith(WRITE_LOCK_PATH_NAME));
+      const writeNodePaths = children.filter((child) =>
+        child.startsWith(WRITE_LOCK_PATH_NAME)
+      );
 
-      if (!this.pathUtility.doesLowerSequenceNumberChildPathExist(createdPath, writeNodePaths)) {
+      if (
+        !this.pathUtility.doesLowerSequenceNumberChildPathExist(
+          createdPath,
+          writeNodePaths
+        )
+      ) {
         this.lockAbsolutePath = createdPath;
         return { acquired: true, error: null };
       }
@@ -207,7 +253,13 @@ export class ReadLock {
       });
       return { acquired: false, error: null };
     } catch (err: unknown) {
-      return { acquired: false, error: new LockError(LockErrorCodes.UNEXPECTED_ERROR, "An unexpected error occurred while trying to acquire the read lock.") };
+      return {
+        acquired: false,
+        error: new LockError(
+          LockErrorCodes.UNEXPECTED_ERROR,
+          "An unexpected error occurred while trying to acquire the read lock."
+        ),
+      };
     }
   }
 
@@ -219,11 +271,17 @@ export class ReadLock {
    * @returns An object with `released` to represent whether the lock is released, and `error` (if any).
    * @throws {LockError}
    */
-  public async release(): Promise<ReadLockReleaseResponse> {
+  public async release(): Promise<ReleaseResponse> {
     try {
-      const client = this.ntCuratorFramework.getClient();
+      const client = this.ntCurator.getClient();
       if (client.getState().code !== State.SYNC_CONNECTED.code) {
-        return { released: false, error: new LockError(LockErrorCodes.NOT_CONNECTED, "Failed to release the read lock because of connection issues.") };
+        return {
+          released: false,
+          error: new LockError(
+            LockErrorCodes.NOT_CONNECTED,
+            "Failed to release the read lock because of connection issues."
+          ),
+        };
       }
       try {
         await new Promise((res, rej) => {
@@ -241,7 +299,67 @@ export class ReadLock {
 
       return { released: true, error: null };
     } catch (err: unknown) {
-      return { released: false, error: new LockError(LockErrorCodes.UNEXPECTED_ERROR, "An unexpected error occurred while trying to release the read lock.") };
+      return {
+        released: false,
+        error: new LockError(
+          LockErrorCodes.UNEXPECTED_ERROR,
+          "An unexpected error occurred while trying to release the read lock."
+        ),
+      };
+    }
+  }
+
+  /**
+   * Checks if there is already a lock being acquired for the path.
+   *
+   * @returns An object with `locked` to represent whether the lock is already acquired on the same path, and `error` (if any).
+   * @throws {LockError}
+   */
+  public async isTypeLocked(): Promise<IsTypeLockedResponse> {
+    try {
+      const client = this.ntCurator.getClient();
+      if (client.getState().code !== State.SYNC_CONNECTED.code) {
+        return {
+          locked: false,
+          error: new LockError(
+            LockErrorCodes.NOT_CONNECTED,
+            "Failed to check is locked because of connection issues."
+          ),
+        };
+      }
+
+      try {
+        const children: string[] = await new Promise((res, rej) => {
+          client.getChildren(this.nodeAbsolutePath, (error, children) => {
+            if (error) return rej(error);
+            res(children);
+          });
+        });
+
+        const childrenSortedBySequenceId = children
+          .slice()
+          .sort((a, b) => getNodeSequenceNumber(a) - getNodeSequenceNumber(b));
+
+        const [firstChild] = childrenSortedBySequenceId;
+
+        const isReadLocked = firstChild?.startsWith(READ_LOCK_PATH_NAME);
+        if (isReadLocked) {
+          return { locked: true, error: null };
+        }
+      } catch (err) {
+        const { code } = parseZooKeeperError(err);
+        if (code !== Exception.NO_NODE) throw err;
+      }
+
+      return { locked: false, error: null };
+    } catch (err: unknown) {
+      return {
+        locked: false,
+        error: new LockError(
+          LockErrorCodes.UNEXPECTED_ERROR,
+          "An unexpected error occurred while trying to check if is locked."
+        ),
+      };
     }
   }
 }

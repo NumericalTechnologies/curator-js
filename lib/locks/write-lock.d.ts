@@ -1,28 +1,20 @@
 /// <reference types="node" />
-import { NtCuratorFramework } from "../nt-curator-framework";
-import { LockError } from "../errors/lock-error";
-interface WriteLockAcquireResponse {
-    acquired: boolean;
-    error: LockError | null;
-}
-interface WriteLockReleaseResponse {
-    released: boolean;
-    error: LockError | null;
-}
+import { NtCurator } from "../nt-curator";
+import { AcquireResponse, IsTypeLockedResponse, ReleaseResponse, TryAcquireResponse } from "./locks.types";
 export declare class WriteLock {
     nodeAbsolutePath: string;
     lockAbsolutePath: string;
-    private ntCuratorFramework;
+    private ntCurator;
     private pathUtility;
-    constructor(ntCuratorFramework: NtCuratorFramework, path: string);
+    constructor(ntCurator: NtCurator, path: string);
     createLockPath(path: string): string;
     acquire(options?: {
         data?: Buffer;
         timeout?: number;
-    }): Promise<WriteLockAcquireResponse>;
+    }): Promise<AcquireResponse>;
     tryAcquire(options?: {
         data?: Buffer;
-    }): Promise<WriteLockAcquireResponse>;
-    release(): Promise<WriteLockReleaseResponse>;
+    }): Promise<TryAcquireResponse>;
+    release(): Promise<ReleaseResponse>;
+    isTypeLocked(): Promise<IsTypeLockedResponse>;
 }
-export {};

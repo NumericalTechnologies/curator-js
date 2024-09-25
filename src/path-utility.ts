@@ -1,11 +1,11 @@
 import { join } from "path";
 import { CreateMode, Exception } from "node-zookeeper-client";
-import { NtCuratorFramework } from "./nt-curator-framework";
+import { NtCurator } from "./nt-curator";
 import { getNodeSequenceNumber } from "./helpers/validation";
 import { parseZooKeeperError } from "./helpers/error";
 
 export class PathUtility {
-  constructor(private ntCuratorFramework: NtCuratorFramework) {}
+  constructor(private ntCurator: NtCurator) {}
 
   public normalizePath(...path: string[]) {
     return join(...path);
@@ -17,7 +17,7 @@ export class PathUtility {
    * @param normalizedPath Must be a string that is normalized, starting with "/"
    */
   public async ensurePathExists(normalizedPath: string) {
-    const client = this.ntCuratorFramework.getClient();
+    const client = this.ntCurator.getClient();
     const pathsToCreate = normalizedPath
       .split("/")
       .filter((path) => !!path)
@@ -40,7 +40,7 @@ export class PathUtility {
             (error, path) => {
               if (error) return rej(error);
               res(path);
-            },
+            }
           );
         });
       } catch (err) {
@@ -50,20 +50,24 @@ export class PathUtility {
     }
   }
 
-  public doesLowerSequenceNumberChildPathExist(pathWithSequenceNumber: string, children: string[]): boolean {
+  public doesLowerSequenceNumberChildPathExist(
+    pathWithSequenceNumber: string,
+    children: string[]
+  ): boolean {
     const pathSequenceNumber = getNodeSequenceNumber(pathWithSequenceNumber);
     if (Number.isNaN(pathSequenceNumber)) return false;
 
-    return !!(
-      children.find((child) => {
-        const childSequenceNumber = getNodeSequenceNumber(child);
-        if (Number.isNaN(childSequenceNumber)) return false;
-        return childSequenceNumber < pathSequenceNumber;
-      })
-    );
+    return !!children.find((child) => {
+      const childSequenceNumber = getNodeSequenceNumber(child);
+      if (Number.isNaN(childSequenceNumber)) return false;
+      return childSequenceNumber < pathSequenceNumber;
+    });
   }
 
-  public getNextLowestSequenceNumberChildPath(pathWithSequenceNumber: string, children: string[]) {
+  public getNextLowestSequenceNumberChildPath(
+    pathWithSequenceNumber: string,
+    children: string[]
+  ) {
     let pathSequenceNumber = getNodeSequenceNumber(pathWithSequenceNumber);
     if (Number.isNaN(pathSequenceNumber)) {
       pathSequenceNumber = Number.MIN_SAFE_INTEGER;
@@ -75,10 +79,11 @@ export class PathUtility {
       const childPath = children[i];
       const childSequenceNumber = getNodeSequenceNumber(childPath);
       if (
-        Number.isNaN(childSequenceNumber)
-        || childSequenceNumber < largestSequenceNumber
-        || childSequenceNumber >= pathSequenceNumber
-      ) continue;
+        Number.isNaN(childSequenceNumber) ||
+        childSequenceNumber < largestSequenceNumber ||
+        childSequenceNumber >= pathSequenceNumber
+      )
+        continue;
 
       largestSequenceNumber = childSequenceNumber;
       largestSequenceNumberChildPath = childPath;
